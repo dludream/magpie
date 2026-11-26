@@ -618,6 +618,25 @@ none for `defaultWorkspace`). Read only, no resume or delete. Tests:
 `TestCatPawSessions`, `TestCatPawTranscript` (rows made by CatPaw's own
 CREATE statements and message shapes; no signed-in conversation was had).
 
+Hermes Agent keeps its sessions as rows in each profile's `state.db`
+(SQLite in WAL mode): the home (`HERMES_HOME`, else `~/.hermes`, else
+`%LOCALAPPDATA%\hermes` on Windows) and each `profiles/<name>`
+(`HermesDirs`). A session's path is the database and `#` its id. What
+was said is read from the same rows its counts are (`hermesTranscript`,
+through `eachMessageOf`): a rewind's dropped rows and model-only
+scaffolding are left out, a compaction's archived turns are kept once,
+and a row Hermes never shows (`display_kind` `hidden`) is skipped. A
+row's content is Hermes's `_encode_content` (the text, or `\x00json:`
+and its parts); an assistant's `reasoning` (or `reasoning_content`) is
+its thinking, its OpenAI `tool_calls` its tool uses, and a `tool` row's
+answer is named by its `tool_name`. A compaction's handoff summary is
+context and the turn after its end marker is said (`hermesDisplayText`).
+Before, Hermes had no transcript, so Show conversation, search and
+memory learning passed every Hermes session over (CFK on Discord).
+Read only, no resume or delete. Tests: `TestHermesTranscript` (Hermes's
+own CREATE statements, schema 31, and row encodings; no real Hermes
+conversation was read), `TestHermesSessionsRead` in memdistill.
+
 ## Local Gateway Conversation Recording
 
 The Sessions page offers an explicit, default-off recording switch. Confirmation
@@ -1283,17 +1302,34 @@ arguments are never kept, not even masked.
   server, the Requested cell the tool, and the status Succeeded or
   Failed. The Purpose filter names `kind:mcp` "MCP tool"
   (`purposeKinds`, `purposes.js`).
+- **Counted by tool:** while the Purpose filter is `kind:mcp`
+  (`Filter.picksMCP`), a requests page also holds `Tools` (`tools` in
+  `/api/usage/requests`, `mcp_tools.go`; tomtanir and lyl50478600 on X):
+  each server and tool's calls among the rows the filter keeps, how many
+  failed, the last, and `per_day`, the calls over the days from the tool's
+  first call in the period to its end (now for one not ended), one at
+  least, or over the one day of a day's page. It is read from the probe
+  chunk only (`mcpTools`; the ledger path tallies its own rows), and for
+  no other purpose, so the cells, their cache and `settledCountVersion`
+  don't change. The page shows it as the Tool calls card under the chart
+  (`drawLedTools`, `#ledTools`), the most called first.
+  `TestMCPToolCallsCounted` and `usage-mcp-tools.test.cjs` cover it.
 
 ### Claude Code's helper requests and the largest cache write
 
 Claude Code's AgentSummary ("Describe your most recent action in 3-5
 words.") and its auto mode classifier name themselves nowhere in the
 request, so `inferredKind` (observe.go) tells them by their content, for
-a `claude-cli/` request on the Messages API only, and the ledger row's
+a Claude Code request on the Messages API only, and the ledger row's
 Kind is `agent_summary_inferred` or `auto_mode_check_inferred`
 (`usage.InferredSuffix`). The name says "(inferred)"; both spellings share
 the plain kind's purpose, which a client marker would use. Anything else
-stays unmarked.
+stays unmarked. Claude Code's request is told by its `claude-cli/`
+User-Agent, or, from another magpie, by the agent's User-Agent that magpie
+names (`ClientUAHeader`, `claudeCodeAsks`); until 11-26 a Remote magpie
+recorded the relayed helpers unmarked (recih, #7852). The header counts
+only on a magpie's request, so a direct one that sets it is not taken for
+Claude Code's.
 
 A requests page also holds `BigWrite` (big_write.go): the gateway-served
 row that wrote the most to the cache, kept per chunk (`chunkPart.big`) and

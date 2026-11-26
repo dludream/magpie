@@ -4,8 +4,9 @@ The full manual: every agent magpie wires, every provider option, the gateway, r
 
 Renamed a project folder? See [relocating Claude Code sessions](session-relocation.md).
 
-One place to pick every agent's model: Codex on DeepSeek, Claude Code
-on Kimi, Gemini CLI on GLM, from the menu bar. [usemagpie.ai](https://usemagpie.ai)
+Every plan you pay for, in one pool, for any agent: Claude Code on your
+ChatGPT Pro, Codex on your Claude Max, Claude Desktop on your GLM Coding
+Plan. When one runs out, the next takes over. [usemagpie.ai](https://usemagpie.ai)
 
 [![Discord](https://img.shields.io/badge/Discord-join%20the%20community-5865F2?logo=discord&logoColor=white)](https://discord.gg/vGSnD3ZKQF)
 
@@ -793,7 +794,11 @@ budget, models or accounts is also told `heldTo` (`budget`, `models`,
 `accounts`), `models` (what it may use), `quotas` (whether its owner lets
 it see quotas and the status line) and, while that is on,
 `quotaProviders` (the providers whose cards it is told); `limited` stays
-about its budget alone. A magpie that has this
+about its budget alone. A key that may use all of magpie (no budget,
+models, accounts or MCP servers, not read-only, issued or expiring, no
+cap on requests at once) is told `full: true`; a magpie that adds this
+one as a Remote magpie with such a key takes its MCP servers, skills and
+prompts at once. A magpie that has this
 one as a Remote magpie provider shows each of its keys' limits on its
 Usage page this way (#1547). Requests from
 this computer that send no gateway key are not limited; a gateway key used
@@ -1559,7 +1564,11 @@ A plugin can add a web search API to Settings › Models › Web search with a
 `search` hook (magpie's own; OpenCode ignores it). It is listed after
 Tavily, Brave and the rest under its own name, and added, keyed, switched
 off, reordered and removed like them (`magpie search add <plugin>:<id> <key>`
-on the command line). magpie keeps its keys (several, tried in turn, a refused
+on the command line, where the plugin's name or the id alone will do when it
+names one API; an empty `magpie search` lists the plugins' APIs). An API
+that signs in to the plugin's own provider (agy-cli's) is added by itself
+when you sign in to that provider and no search API was ever set up; one you
+remove stays removed. magpie keeps its keys (several, tried in turn, a refused
 one resting), its order and its place in the request log, masks the query
 as it does for every search API, and asks the plugin only while the
 plugin is on and the Web search plugin is.
@@ -4825,6 +4834,15 @@ and models to look after first, by magpie's own ids only:
   `~/.config/magpie/plugin-likes.json`. The code is
   [internal/stats/plugins.go](../internal/stats/plugins.go) and
   [site/pluginstats.js](../site/pluginstats.js).
+- to usemagpie.ai too, which of the routing groups shared there were
+  imported here from a link and are still here, by their share ids only
+  (`POST /api/groups/report`, at most 50), with the same id, so the
+  gallery can say how many use each (the ids that reported it in 7 days).
+  A group of the user's own, one imported from text, and a group's name or
+  members here never go; a computer that never imported one sends nothing.
+  A like on a shared group goes there too. The code is
+  [internal/groupshare](../internal/groupshare/groupshare.go) and
+  [site/groups.js](../site/groups.js).
 
 No names, base URLs, accounts, keys, prompts or usage go. Turn that part off
 in Settings → Privacy → Share the agents, providers, models and plugins I use; the
