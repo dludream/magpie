@@ -496,6 +496,9 @@ type settingsJSON struct {
 	// WSL is whether there is WSL to look in for agents (Windows), for
 	// Settings' Detect agents in WSL (#1264)
 	WSL bool `json:"wsl,omitempty"`
+	// GPU is Linux's GPU rendering row (gpurender.go): magpie's pick,
+	// this run's, and the WEBKIT_* variables the user set; nil elsewhere
+	GPU *gpuJSON `json:"gpu,omitempty"`
 	// Rekeyed is what an agent beyond loopback, given the sharing key,
 	// couldn't be set again with when sharing changed (agent.Rekey)
 	Rekeyed string `json:"rekeyed,omitempty"`
@@ -910,6 +913,7 @@ func settingsState() settingsJSON {
 		s.PublicKind = gateway.URLKind(s.PublicURL)
 	}
 	s.WSL = runtime.GOOS == "windows"
+	s.GPU = gpuRow()
 	s.Web = webPage.Load()
 	s.GatewayOn, s.GatewayWhy = gatewayMode(s.Web)
 	s.GatewayPaused = pausedNow()
@@ -1354,6 +1358,12 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 		// and the accent and wallpaper of the user's own (appearance.go),
 		// drawn before the first paint
 		boot["look"] = lookKey(s)
+		// and the time zone this magpie is set to (Settings' timeZone,
+		// JackyFill on X), the page's from the first line: tzshim.js
+		// puts Date and Intl in it, after bootPrefs, below
+		if s.TimeZone != "" && settings.ValidTimeZone(s.TimeZone) {
+			boot["timeZone"] = s.TimeZone
+		}
 		b, _ := json.Marshal(boot)
 		rw.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		rw.Header().Set("Cache-Control", "no-store")
@@ -1369,6 +1379,11 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 			c, _ := json.Marshal(css)
 			out = append(out, `(function(){var e=document.createElement("style");e.id="lookCSS";e.textContent=`...)
 			out = append(append(out, c...), ";document.head.appendChild(e)})();\n"...)
+		}
+		if _, ok := boot["timeZone"]; ok {
+			if js, err := fs.ReadFile(staticFS(), "tzshim.js"); err == nil {
+				out = append(out, js...)
+			}
 		}
 		rw.Write(out)
 	})
@@ -2488,6 +2503,21 @@ func Handler(w Windows, gw *gateway.Server) http.Handler {
 			return
 		}
 		if err := provider.SetCodexResetLead(in.Minutes); err != nil {
+			fail(rw, err)
+			return
+		}
+		writeJSON(rw, settingsState())
+	})
+	// which Codex resets are spent by themselves, by the days they have
+	// left: at least Least and at most Most, 0 for no bound (both 0 is
+	// every one, the default)
+	mux.HandleFunc("POST /api/settings/codex-reset-days", func(rw http.ResponseWriter, r *http.Request) {
+		var in struct{ Least, Most int }
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			fail(rw, err)
+			return
+		}
+		if err := provider.SetCodexResetDays(in.Least, in.Most); err != nil {
 			fail(rw, err)
 			return
 		}

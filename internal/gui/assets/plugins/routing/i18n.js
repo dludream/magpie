@@ -2,6 +2,8 @@
 // kernel adds them to i18n.js's (magpie.strings).
 magpie.strings({
   zh: {
+    "{name} has no fallback, so nothing took over.": "{name} 没有设置备用，没有谁接手。",
+    "Set a fallback": "设置备用",
     "Classifier prompt": "意图判断提示词",
     "Empty: magpie's own. The message goes to the intent that fits it best.": "留空即用 magpie 自带的：消息归入最贴合的意图。",
     "Told to the classifier in place of magpie's instructions as each turn begins. The intents are still listed by number, and it still answers with the number alone.": "每轮开始时，代替 magpie 的说明发给意图判断模型。意图仍按编号列出，它仍只回答编号。",
@@ -190,6 +192,8 @@ magpie.strings({
     "Leave out a provider…": "排除供应商…",
     "Leave out of found groups": "不参与自动成组",
     "Found groups changed": "自动路由组已更新",
+    "Groups of one provider": "单个供应商也成组",
+    "A model only one of your providers serves becomes a group too (auto/…), so agents keep that name when a second provider comes or one goes.": "只有一个供应商提供的模型也会成组（auto/…），这样增加或移除供应商时，Agent 用的名称不变。",
     "A model two or more of your providers serve becomes a group of them (auto/…). Switch it off to list and serve only the groups you made or changed.": "两个及以上供应商都提供的模型会自动成组（auto/…）。关闭后只列出和提供你新建或改过的组。",
     "Off: only the groups you made or changed are listed and served. An agent set to a found group is moved to its model from one provider, and a request still naming one goes there too.": "已关闭：只列出和提供你新建或改过的组。选了自动组的 Agent 改用其中一个供应商的该模型，仍指定自动组的请求也发往那里。",
     "Found groups are on": "已开启自动创建路由组",
@@ -785,6 +789,8 @@ magpie.strings({
     "Bound to some keys, the group is theirs alone: any other gateway key neither sees it in its model list nor can use it. A request from this computer without a key still can.": "绑定到某些密钥后，这个组只归它们用：其他网关密钥既不会在模型列表里看到它，也用不了它。本机不带密钥的请求仍然可以用。",
   },
   "zh-TW": {
+    "{name} has no fallback, so nothing took over.": "{name} 沒有設定備用，沒有誰接手。",
+    "Set a fallback": "設定備用",
     "Classifier prompt": "意圖判斷提示詞",
     "Empty: magpie's own. The message goes to the intent that fits it best.": "留空即用 magpie 內建的：訊息歸入最貼合的意圖。",
     "Told to the classifier in place of magpie's instructions as each turn begins. The intents are still listed by number, and it still answers with the number alone.": "每輪開始時，取代 magpie 的說明傳給意圖判斷模型。意圖仍按編號列出，它仍只回答編號。",
@@ -983,6 +989,8 @@ magpie.strings({
     "Leave out a provider…": "排除供應商…",
     "Leave out of found groups": "不參與自動成組",
     "Found groups changed": "自動路由組已更新",
+    "Groups of one provider": "單一供應商也成組",
+    "A model only one of your providers serves becomes a group too (auto/…), so agents keep that name when a second provider comes or one goes.": "只有一個供應商提供的模型也會成組（auto/…），這樣新增或移除供應商時，Agent 用的名稱不變。",
     "A model two or more of your providers serve becomes a group of them (auto/…). Switch it off to list and serve only the groups you made or changed.": "兩個及以上供應商都提供的模型會自動成組（auto/…）。關閉後只列出和提供你新增或改過的組。",
     "Off: only the groups you made or changed are listed and served. An agent set to a found group is moved to its model from one provider, and a request still naming one goes there too.": "已關閉：只列出和提供你新增或改過的組。選了自動組的 Agent 改用其中一個供應商的該模型，仍指定自動組的請求也發往那裡。",
     "Found groups are on": "已開啟自動建立路由組",
@@ -1568,6 +1576,8 @@ magpie.strings({
     "Bound to some keys, the group is theirs alone: any other gateway key neither sees it in its model list nor can use it. A request from this computer without a key still can.": "綁定到某些金鑰後，這個組只歸它們用：其他閘道金鑰既不會在模型列表裡看到它，也用不了它。本機不帶金鑰的請求仍然可以用。",
   },
   ja: {
+    "{name} has no fallback, so nothing took over.": "{name} にはフォールバックが設定されていないため、引き継ぐものがありませんでした。",
+    "Set a fallback": "フォールバックを設定",
     "Classifier prompt": "意図判定プロンプト",
     "Empty: magpie's own. The message goes to the intent that fits it best.": "空なら magpie 既定のもの：メッセージを最も合うインテントに振り分けます。",
     "Told to the classifier in place of magpie's instructions as each turn begins. The intents are still listed by number, and it still answers with the number alone.": "各ターンの開始時に、magpie の指示の代わりに意図判定モデルへ伝えます。インテントは引き続き番号付きで並び、モデルは番号だけを答えます。",
@@ -1754,6 +1764,8 @@ magpie.strings({
     "Leave out a provider…": "プロバイダを除外…",
     "Leave out of found groups": "自動グループから除外",
     "Found groups changed": "自動グループを更新しました",
+    "Groups of one provider": "1 つのプロバイダでもグループに",
+    "A model only one of your providers serves becomes a group too (auto/…), so agents keep that name when a second provider comes or one goes.": "1 つのプロバイダだけが提供するモデルもグループ（auto/…）になります。プロバイダを追加・削除しても、エージェントが使う名前は変わりません。",
     "A model two or more of your providers serve becomes a group of them (auto/…). Switch it off to list and serve only the groups you made or changed.": "2 つ以上のプロバイダが提供するモデルは、それらのグループ（auto/…）になります。オフにすると、自分で作成または変更したグループだけを一覧・提供します。",
     "Off: only the groups you made or changed are listed and served. An agent set to a found group is moved to its model from one provider, and a request still naming one goes there too.": "オフ：自分で作成または変更したグループだけを一覧・提供します。自動グループを選んでいるエージェントは、1 つのプロバイダのそのモデルに切り替わり、自動グループを指定したリクエストもそこへ送られます。",
     "Found groups are on": "グループの自動作成はオンです",
@@ -2351,6 +2363,8 @@ magpie.strings({
     "Bound to some keys, the group is theirs alone: any other gateway key neither sees it in its model list nor can use it. A request from this computer without a key still can.": "キーを紐づけると、このグループはそのキー専用になります。ほかのゲートウェイキーではモデル一覧に表示されず、使うこともできません。このコンピューターからキーなしで送るリクエストは引き続き使えます。",
   },
   de: {
+    "{name} has no fallback, so nothing took over.": "Für {name} ist kein Fallback eingestellt, also hat nichts übernommen.",
+    "Set a fallback": "Fallback einstellen",
     "Classifier prompt": "Klassifikator-Prompt",
     "Empty: magpie's own. The message goes to the intent that fits it best.": "Leer: der von magpie. Die Nachricht geht an die Absicht, die am besten passt.",
     "Told to the classifier in place of magpie's instructions as each turn begins. The intents are still listed by number, and it still answers with the number alone.": "Wird dem Klassifikator zu Beginn jeder Runde statt der Anweisungen von magpie gesagt. Die Absichten stehen weiter nummeriert darin, und er antwortet weiter nur mit der Nummer.",
@@ -2537,6 +2551,8 @@ magpie.strings({
     "Leave out a provider…": "Anbieter ausnehmen…",
     "Leave out of found groups": "Aus automatischen Gruppen ausnehmen",
     "Found groups changed": "Automatische Gruppen geändert",
+    "Groups of one provider": "Gruppen aus einem Anbieter",
+    "A model only one of your providers serves becomes a group too (auto/…), so agents keep that name when a second provider comes or one goes.": "Ein Modell, das nur einer Ihrer Anbieter bereitstellt, wird ebenfalls zu einer Gruppe (auto/…), sodass Agenten diesen Namen behalten, wenn ein zweiter Anbieter hinzukommt oder einer wegfällt.",
     "A model two or more of your providers serve becomes a group of them (auto/…). Switch it off to list and serve only the groups you made or changed.": "Ein Modell, das zwei oder mehr Ihrer Anbieter bereitstellen, wird zu einer Gruppe aus ihnen (auto/…). Ausschalten, um nur selbst erstellte oder geänderte Gruppen aufzulisten und bereitzustellen.",
     "Off: only the groups you made or changed are listed and served. An agent set to a found group is moved to its model from one provider, and a request still naming one goes there too.": "Aus: Nur selbst erstellte oder geänderte Gruppen werden aufgelistet und bereitgestellt. Ein Agent, der auf eine gefundene Gruppe eingestellt ist, wechselt zu deren Modell bei einem Anbieter, und eine Anfrage, die sie noch nennt, geht ebenfalls dorthin.",
     "Found groups are on": "Gefundene Gruppen sind eingeschaltet",

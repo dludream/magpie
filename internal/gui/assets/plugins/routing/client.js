@@ -3528,6 +3528,9 @@ function routingPage(part) {
   // request archive's copy, when it was on. Nothing more is recorded for
   // it: without the archive an older request says how to keep them.
   const bodiesGot = new Map(); // route id → { busy } | its bodies | { gone } | { error }
+  // Show request content as the bodies were read (llxth1 on X): switched
+  // in Settings › Privacy, the bodies read before go
+  let hidRead = !!prefs?.hideRequestText;
   const wireOpen = new Set(); // route ids whose HTTP headers are open
   async function loadBodies(id) {
     const pending = { busy: true };
@@ -3553,9 +3556,10 @@ function routingPage(part) {
       if (bodiesKey) { bodiesKey = ""; bodies.replaceChildren(); }
       return;
     }
+    if (prefs && !!prefs.hideRequestText !== hidRead) { hidRead = !hidRead; bodiesGot.clear(); bodiesKey = ""; }
     if (!bodiesGot.has(r.id)) loadBodies(r.id);
     const got = bodiesGot.get(r.id);
-    const key = JSON.stringify([document.documentElement.lang, r.id, r.archive || "", !!providers?.gateway?.archive?.on, got.busy ? "busy" : got.gone ? "gone" : got.error ? "error" : "in", wireOpen.has(r.id)]);
+    const key = JSON.stringify([document.documentElement.lang, r.id, r.archive || "", !!providers?.gateway?.archive?.on, got.busy ? "busy" : got.gone ? "gone" : got.error ? "error" : got.hidden ? "hidden" : "in", wireOpen.has(r.id)]);
     if (key === bodiesKey) return;
     bodiesKey = key;
     if (got.busy) { bodies.replaceChildren(el("div", "none", t("Fetching…"))); return; }
@@ -3579,12 +3583,16 @@ function routingPage(part) {
         : t("magpie keeps the request and response of only the last 40 requests, until it quits. To keep every request's, turn on Request archive at the top of Usage › Requests.")));
       return;
     }
-    const grid = el("div", "call-details");
-    grid.append(
-      callBodyPanel("Request Body", got.requestBody, got.requestTruncated, undefined, "rt|" + r.id + "|req"),
-      callBodyPanel("Response Body", got.responseBody, got.responseTruncated, "rt|" + r.id),
-    );
-    bodies.replaceChildren(grid);
+    // Show request content off (llxth1 on X): no bodies, the headers kept
+    if (got.hidden) bodies.replaceChildren(hiddenContentNote());
+    else {
+      const grid = el("div", "call-details");
+      grid.append(
+        callBodyPanel("Request Body", got.requestBody, got.requestTruncated, undefined, "rt|" + r.id + "|req"),
+        callBodyPanel("Response Body", got.responseBody, got.responseTruncated, "rt|" + r.id),
+      );
+      bodies.replaceChildren(grid);
+    }
     // the headers both ways, folded (wireHeadersView, usage/page.js)
     if (got.headers) bodies.append(wireHeadersView(got.headers, wireOpen.has(r.id), () => {
       if (wireOpen.has(r.id)) wireOpen.delete(r.id); else wireOpen.add(r.id);
@@ -3884,6 +3892,10 @@ function routingPage(part) {
       else if (tr.done && tryOk(tr) && tr.routed) items.push([routedWhy(tr), "aside", tr]);
       if (tr.done && tryOk(tr) && tr.upstream) items.push([upstreamWhy(tr), "aside upstream-said", tr]);
     });
+    // the request ended on a provider's refusal with nothing set to take
+    // over: said where it ended, with the way to set something
+    const lone = fallbackWanted(r);
+    if (lone) items.push([t("{name} has no fallback, so nothing took over.", { name: lone.name }), "aside fallback-none", { model: lone.id }, lone.w]);
     if (r.done && !r.tries.length) items.push([t("Nothing was tried: {error}", { error: r.error || r.status }), "bad"]);
     // one magpie held too long before routing it was stopped, and what
     // held it saved to a report (the app's log goes only to stderr, which
@@ -3923,9 +3935,48 @@ function routingPage(part) {
       if (c === "swap") li.prepend(swapTag(tr), " ");
       if (c === "aside time") li.replaceChildren(timeElement(tr));
       if (c === "aside held") li.append(" ", ...heldActions(tr.model));
+      if (c === "aside fallback-none") li.append(" ", fallbackAction(tr.model));
       return li;
     }));
     keptIcons = null;
+  }
+
+  // fallbackWanted is the provider a request ended on, when it ended on
+  // an error a fallback takes — rate limited, out of quota or credit,
+  // overloaded, down, slow — with no fallback set for it, the agent having
+  // asked for its model, not a group: null otherwise. jimlee0824v2 on X:
+  // OpenCode Zen Free's DeepSeek ran out after a few requests, the agent
+  // stopped on the 429, and the backup they asked for, a group to go on
+  // to, is the provider's Fallback, under Advanced, where they didn't
+  // find it.
+  const FALLS_OVER = new Set(["rate", "quota", "credit", "overloaded", "slow"]);
+  function fallbackWanted(r) {
+    const tr = r.tries.at(-1);
+    if (!r.done || r.group || !tr?.done || tryOk(tr) || tr.gone) return null;
+    if (!(tr.status === 429 || tr.status >= 500 || FALLS_OVER.has(tr.fail))) return null;
+    if ([...r.order, ...(r.left || [])].some((x) => x.fallback)) return null;
+    const w = tried(r, tr);
+    if (!w || w.fallback || !w.provider) return null;
+    // as the provider is now: one given a fallback since asks for none
+    const p = providers?.providers?.find((x) => x.id === w.provider);
+    if (providers && (!p || p.fallback?.length || decideOnly(p))) return null;
+    return { id: w.provider, name: p?.name || w.name || w.provider, w };
+  }
+  // fallbackAction opens the provider's editor at its Fallback, Advanced
+  // open, where a model or a routing group is picked
+  function fallbackAction(id) {
+    const b = el("button", "link", t("Set a fallback"));
+    b.onclick = async () => {
+      advanced = { of: id, open: true };
+      await openProvider(id);
+      // an editor first drawn waits for advgroups.js (app.js advMod)
+      await advMod();
+      if (editing !== id) return;
+      const q = document.querySelector(".editor .fallback input");
+      q?.scrollIntoView({ block: "center" });
+      q?.focus(NO_SCROLL);
+    };
+    return b;
   }
 
   // heldActions are a held request's report's buttons: Copy Report, and
@@ -6413,7 +6464,16 @@ function routingPage(part) {
   const gSet = el("div", "list rt-gset");
   gSet.dataset.feature = "groups";
   gSet.append(gFound, gNames, ...gDefs);
-  gsec.append(gHead, gList, gOff, sHead, gSet, pHead, pList);
+  // what few change, folded under Advanced below them: whether a model one
+  // provider alone serves is a found group too (realLemonawa on X), shown
+  // while found groups are on
+  const gOne = el("div", "rt-gone hint-row");
+  const gMore = el("details", "prefs-more rt-gmore");
+  gMore.dataset.feature = "groups";
+  const gMoreList = el("div", "list rt-gset");
+  gMoreList.append(gOne);
+  gMore.append(el("summary", "", t("Advanced")), gMoreList);
+  gsec.append(gHead, gList, gOff, sHead, gSet, gMore, pHead, pList);
   // on the Routing groups page, a page of their own; Try again on it puts
   // them back in its markup made anew. With the groups off, that page's
   // tab leaves the sidebar (yyddbds on Discord: it stayed), and what is
@@ -7050,6 +7110,7 @@ function routingPage(part) {
       // so the key being typed into it lands once (#1055)
       replaceKeeping(gHead, head);
       drawFound();
+      drawOne();
       drawNames();
       drawDefaults();
     }
@@ -7463,6 +7524,45 @@ function routingPage(part) {
       : t("Off: only the groups you made or changed are listed and served. An agent set to a found group is moved to its model from one provider, and a request still naming one goes there too.")));
     if (on) txt.append(skipPick());
     gFound.replaceChildren(txt, s);
+  }
+  // drawOne: the switch under Advanced for a group of a model one provider
+  // alone serves (provider.SetAutoGroupsOfOne): on, auto/<model> is there
+  // before a second provider lists the model and stays when one goes
+  // (#5799). Off by default; the groups the user made or changed stay as
+  // they are either way. Open at first when it is on.
+  function drawOne() {
+    const on = groups.ofOne === true;
+    gMore.hidden = groups.found === false;
+    if (!gMore.dataset.drawn) {
+      gMore.dataset.drawn = "1";
+      gMore.open = on;
+    }
+    const s = el("button", "lib-switch" + (on ? " on" : ""));
+    s.type = "button";
+    s.setAttribute("role", "switch");
+    s.setAttribute("aria-checked", String(on));
+    s.setAttribute("aria-label", t("Groups of one provider"));
+    s.append(el("i"));
+    s.onclick = (e) => { e.stopPropagation(); setOne(!on, s); };
+    const txt = el("div", "txt");
+    txt.append(el("b", "", t("Groups of one provider")), el("small", "expl", t("A model only one of your providers serves becomes a group too (auto/…), so agents keep that name when a second provider comes or one goes.")));
+    gOne.replaceChildren(txt, s);
+  }
+  async function setOne(on, s) {
+    if (groupDirty() && !(await confirmDiscard())) return;
+    s.classList.toggle("on", on);
+    s.setAttribute("aria-checked", String(on));
+    try {
+      groups = groupsFrom(await api("groups/ofone", { on }));
+      gEdit = null;
+      renderGroups();
+      saidMoved(t("Found groups changed"), groups.moved);
+      load(); // the gateway's model list, the agents' pickers
+    } catch (e) {
+      s.classList.toggle("on", !on);
+      s.setAttribute("aria-checked", String(!on));
+      status(e.message, "err");
+    }
   }
   // skipPick: the providers kept out of found groups (chenxiang0010 on
   // Discord), picked in the app's menu and saved as it closes: their

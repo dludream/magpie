@@ -253,6 +253,7 @@ func readJev(b []byte, intents []string, levels bool, prev before) (verdict, err
 	var out struct {
 		Model   string `json:"model"`
 		Answers map[string]struct {
+			Type          string         `json:"type"`
 			Choice        string         `json:"choice"`
 			Score         float64        `json:"score"`
 			Confidence    float64        `json:"confidence"`
@@ -265,6 +266,14 @@ func readJev(b []byte, intents []string, levels bool, prev before) (verdict, err
 	}
 	if err := decodeJSON(b, &out); err != nil {
 		return verdict{}, answerError{fmt.Errorf("not a System One answer")}
+	}
+	// a question the model declined (OpenAI's Decisions API answers it
+	// {"type":"refusal"}) is no answer: never "none of these" or the
+	// lowest effort, which its empty choice and zero score would read as
+	for k, a := range out.Answers {
+		if a.Type == "refusal" {
+			delete(out.Answers, k)
+		}
 	}
 	var v verdict
 	if a, ok := out.Answers["intent"]; ok && len(intents) > 0 && !levels {
@@ -474,14 +483,31 @@ func (s *Server) systemOne(ctx context.Context, p provider.Provider, model strin
 		}
 		archived = archiveOwn(c, d.sent, d.body, status, header, b)
 	}
+	var keyID, keyName string
+	if p.Account == nil && p.Key != "" {
+		keyID, keyName = provider.KeyID(p.Key), p.KeyName
+	}
+	// a call that failed is the classifier's record too, with why: the
+	// turn's route says the classifier couldn't, and Recent calls shows
+	// the call it made (zyh6036 on X: OpenAI's Decisions API turning
+	// gpt-6-luna's calls away left no record of them anywhere)
+	failed := func(status int, msg string) {
+		usage.Append(usage.Record{Time: start, Agent: usage.AgentOf(RouterAgent), Kind: "routing", Provider: p.ID, Host: p.Where(), Model: model, Requested: model,
+			ProviderKeyID: keyID, ProviderKeyName: keyName, ProviderAccount: accountOf(p),
+			Millis: time.Since(start).Milliseconds(), Status: status, Error: msg, Archive: archived})
+	}
 	if err != nil {
 		if ctx.Err() != nil {
+			failed(http.StatusGatewayTimeout, errNoAnswer.Error())
 			return nil, errNoAnswer
 		}
+		failed(http.StatusBadGateway, err.Error())
 		return nil, err
 	}
 	if status >= 300 {
-		return nil, decideRefused{fmt.Errorf("%s: %s", p.Name, provider.APIError(b, fmt.Sprintf("%d %s", status, http.StatusText(status)))), status, header, b}
+		msg := provider.APIError(b, fmt.Sprintf("%d %s", status, http.StatusText(status)))
+		failed(status, msg)
+		return nil, decideRefused{fmt.Errorf("%s: %s", p.Name, msg), status, header, b}
 	}
 	var use struct {
 		Model string `json:"model"` // the one that answered, when the reply says
@@ -491,10 +517,6 @@ func (s *Server) systemOne(ctx context.Context, p provider.Provider, model strin
 		} `json:"usage"`
 	}
 	_ = decodeJSON(b, &use)
-	var keyID, keyName string
-	if p.Account == nil && p.Key != "" {
-		keyID, keyName = provider.KeyID(p.Key), p.KeyName
-	}
 	usage.Append(usage.Record{Time: start, Agent: usage.AgentOf(RouterAgent), Kind: "routing", Provider: p.ID, Host: p.Where(), Model: model, Requested: model, Served: use.Model,
 		ProviderKeyID: keyID, ProviderKeyName: keyName, ProviderAccount: accountOf(p),
 		Input: use.Usage.Input, Output: use.Usage.Output, Millis: time.Since(start).Milliseconds(), Status: status, Archive: archived})
@@ -633,6 +655,15 @@ func (s *Server) serveSystemOneBody(w http.ResponseWriter, r *http.Request, body
 	if keyWho, held := keyHolds(r); held && !modelAllowed(keyWho, p, model) {
 		st, msg := keyModelRefusal(w, keyWho, p.ID+"/"+model)
 		writeError(w, provider.Chat, st, msg)
+		return
+	}
+	// audio goes only to a model that reads it (#7790): any other is
+	// told so, never asked the question without what it was about
+	if audio, msg := systemOneAudio(body); msg != "" {
+		writeError(w, provider.Chat, http.StatusBadRequest, msg)
+		return
+	} else if audio && !(systemOneTarget{p, model}).takesAudio() {
+		writeError(w, provider.Chat, http.StatusBadRequest, noAudioError(asked))
 		return
 	}
 	// its keys or accounts in its routing's order, each asked until one

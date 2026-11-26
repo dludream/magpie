@@ -727,8 +727,12 @@ func (s *Server) Recent() []Call {
 // RouteCall is the call the Routing page's request route was, while it is
 // still in the ring.
 func (s *Server) RouteCall(route int64) (Call, bool) {
+	hide := HidesRequestText()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if hide {
+		s.forgetRingText()
+	}
 	for i := len(s.recent) - 1; i >= 0; i-- {
 		if route != 0 && s.recent[i].Route == route {
 			return s.recent[i], true
@@ -739,8 +743,12 @@ func (s *Server) RouteCall(route int64) (Call, bool) {
 
 // RecentCall is the call numbered id while it is still in the ring.
 func (s *Server) RecentCall(id uint64) (Call, bool) {
+	hide := HidesRequestText()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if hide {
+		s.forgetRingText()
+	}
 	for _, c := range s.recent {
 		if c.ID == id {
 			return c, true
@@ -759,8 +767,17 @@ func (s *Server) record(c Call) {
 		archive(c)
 		c.wire = nil
 	}
+	// Show request content off: the ring keeps no call's bodies, and lets
+	// go of those kept before (request_text.go)
+	hide := HidesRequestText()
+	if hide {
+		c = withoutText(c)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if hide {
+		s.forgetRingText()
+	}
 	s.calls++
 	c.ID = s.calls
 	s.recent = keepRecent(s.recent, c)
@@ -1059,17 +1076,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		// away, and its client opens a new one
 		s.realtimes.end()
 		go func() { defer close(sockets); s.sockets.drain(c); s.realtimes.wait(c) }()
-		if err := srv.Shutdown(c); err != nil {
-			// the requests still answering are cut where they are, and
-			// an agent streaming one reads a reply broken off (Codex:
-			// "error decoding response body")
-			log.Printf("gateway: ending after %s with requests still in flight; they are cut (%v)", s.drainFor(), err)
-			// Shutdown leaves them answering: closing their connections
-			// cancels each one's context, so its upstream call ends too
-			// and holds nothing (provider.Hold) past the gateway's end in
-			// a process that goes on (a restart, a test)
-			srv.Close()
-		}
+		s.shutdownServer(srv, c)
 		<-sockets
 		// An inline description may still have to save after its request
 		// ended, or was canceled: wait for every such description to save or
@@ -1106,6 +1113,32 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	}
 }
 
+// shutdownServer ends srv's serving: the requests in flight are given
+// the drain to finish, and the ones still answering when the drain is
+// over are cut.
+//
+// A listener closed before the shutdown is not a cut request. On Windows
+// serveWSL closes the listeners it opened on the WSL networks when the
+// gateway's context ends, and the shutdown closes them again: its second
+// close says the network connection is closed, and the drain reads that
+// as a timeout and says the requests in flight were cut — every Windows
+// quit said so, with no request in flight (#7729).
+func (s *Server) shutdownServer(srv *http.Server, c context.Context) {
+	err := srv.Shutdown(c)
+	if err == nil || errors.Is(err, net.ErrClosed) {
+		return
+	}
+	// the requests still answering are cut where they are, and
+	// an agent streaming one reads a reply broken off (Codex:
+	// "error decoding response body")
+	log.Printf("gateway: ending after %s with requests still in flight; they are cut (%v)", s.drainFor(), err)
+	// Shutdown leaves them answering: closing their connections
+	// cancels each one's context, so its upstream call ends too
+	// and holds nothing (provider.Hold) past the gateway's end in
+	// a process that goes on (a restart, a test)
+	srv.Close()
+}
+
 // Handler routes the client APIs.
 func (s *Server) Handler() http.Handler {
 	mux := s.routes()
@@ -1113,7 +1146,7 @@ func (s *Server) Handler() http.Handler {
 	// on (dumpFirst)
 	// a socket's turns go through all of it again (socketEntry); the
 	// agent's Retry-After is bounded on the way out (retryCapped)
-	return socketEntry(s.dumpFirst(retryCapped(s.counted(headerLogged(holdCatalog(corsGuard(callerGuard(readOnlyGuard(mux, withCaller(keptBodyRequests(keyLimited(s.keySlots(mux, mux)))))))))))))
+	return socketEntry(s.dumpFirst(retryCapped(s.counted(headerLogged(holdCatalog(corsGuard(callerGuard(readOnlyGuard(mux, keySurfaceGuard(mux, withCaller(keptBodyRequests(keyLimited(s.keySlots(mux, mux))))))))))))))
 }
 
 // routes are the client APIs, each by its pattern: readOnlyGuard reads
@@ -3665,7 +3698,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	// key or account added while the conversation runs doesn't take it over
 	// (#63): its reasoning, sealed by the account that wrote it, is refused
 	// by another.
-	before := len(cands)
+	before, beforeAff := len(cands), slices.Clone(cands)
 	inOrder := routingOf(p.Routing) == provider.Ordered
 	if isGroup {
 		inOrder = routingOf(g.Routing) == provider.Ordered
@@ -3675,6 +3708,15 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	// failure rests the account as it would with the others still there,
 	// for new conversations to go elsewhere meanwhile (#1797)
 	strictAlone := aff.Why == "strict" && len(cands) < before
+	// and the others Strict left out, asked only when the vendor's safety
+	// filter refuses what the conversation's own one was sent: a refusal
+	// is about the request's content, not the account Strict keeps, and
+	// that one refuses the same words every time it is asked (Winnie7572
+	// on X: a member's 451 ended every try at it, five members ready)
+	var strictLeft []candidate
+	if strictAlone {
+		strictLeft = notAmong(beforeAff, cands)
+	}
 	defer opened(stuck)
 	leadAccount := ""
 	if sealedTask && !aff.Kept {
@@ -3795,7 +3837,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	if pin != "" {
 		var status int
 		var msg string
-		if cands, pl, status, msg = pinTo(pin, cands, pl); status != 0 {
+		// an account turned off is reached by this machine, or a key
+		// held to nothing (pinOff)
+		if cands, pl, status, msg = pinTo(pin, cands, pl, from, !keyHeld && !accHeld); status != 0 {
 			call.Status, call.Error = status, "account pinned: "+pinnedName(pin)
 			writeError(w, from, status, msg)
 			finishCapture()
@@ -3829,6 +3873,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	all := cands
 	var restLeft []candidate
 	cands, restLeft = probeLeft(cands)
+	strictLeft, _ = probeLeft(strictLeft)
 	// those it left out resting only for a while magpie guessed are asked
 	// next, once every one asked has failed for itself (briefLeftOf)
 	briefLeft := briefLeftOf(restLeft)
@@ -4263,7 +4308,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		// asked again, of it or of the next candidate. Only a stream the
 		// agent has the headers of already is held, to be told in it
 		pass := c.p.PassesErrors()
-		hw := newHoldWriter(w, kept.sent || !pass && (!last || len(briefLeft) > 0 || again < max(lastRetries, rateRetries) || other != nil || autoPicks(c) && repicked < 2 ||
+		hw := newHoldWriter(w, kept.sent || !pass && (!last || len(briefLeft) > 0 || len(strictLeft) > 0 || again < max(lastRetries, rateRetries) || other != nil || autoPicks(c) && repicked < 2 ||
 			patience > 0 && rounds < replanRounds && (waitFrom.IsZero() || time.Since(waitFrom) < patience) || wantWhole))
 		// a compaction's summary is held to its end, for a cut or an
 		// error halfway to go to the next candidate (#2274)
@@ -4300,14 +4345,17 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		if !last && c.claudeAccount() && slices.ContainsFunc(cands[i+1:], candidate.claudeAccount) {
 			retell, noRetell = tooBigToRetell(from, body)
 		}
-		if !pass && handsOver(streams, last || noRetell && len(otherThanClaudeAccounts(cands[i+1:])) == 0, wantWhole, from, refusals) {
+		// the last of a strict conversation's own isn't, for a refusal,
+		// while Strict left others out (strictLeft)
+		refusedLast := last && len(strictLeft) == 0
+		if !pass && handsOver(streams, refusedLast || noRetell && len(otherThanClaudeAccounts(cands[i+1:])) == 0, wantWhole, from, refusals) {
 			// reasoning that went through as it came, and a refusal after
 			// it with nothing yet said: the next candidate answers in the
 			// same stream (refusalHandover; yhwangl on X)
 			hw.over = &refusalHandover{proto: from, seq: -1}
 		}
 		// the reasoning's hold, above, once the handover is known
-		hw.thinkingShown = !s.holdsThinking(c, hw.over != nil) || last
+		hw.thinkingShown = !s.holdsThinking(c, hw.over != nil) || refusedLast
 		report := cacheReport
 		if c.p.Account == nil || c.p.Account.Agent != "claude" {
 			report = nil
@@ -5259,6 +5307,19 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 				// refusal be: nobody else is, and the agent has it now
 				cands = cands[:i+1]
 				last = true
+			} else if last && len(strictLeft) > 0 && hw.mayAskAgain() {
+				// the last of a strict conversation's own refused it: the
+				// others Strict left out are asked, as a group's members
+				// or a provider's accounts are for any other conversation.
+				// The one that answers keeps the conversation, whose
+				// words this one refuses. Not a Claude subscription's
+				// other accounts for a big conversation (tooBigToRetell)
+				left := strictLeft
+				if _, big := tooBigToRetell(from, body); big && c.claudeAccount() {
+					left = otherThanClaudeAccounts(left)
+				}
+				cands, strictLeft = append(slices.Clip(cands), left...), nil
+				last = i == len(cands)-1
 			} else if noRetell {
 				// another Claude subscription account is a new Claude Code
 				// told the whole conversation, a cache written again on that
@@ -10263,6 +10324,7 @@ func (s *Server) translate(w http.ResponseWriter, r *http.Request, p provider.Pr
 		// refused, with its code (magpie-releases#18); anything else is
 		// the vendor failing, with the status its words would have come
 		// with: a minute limit in a 200 stream is a 429, not a 502
+		resetsOn(w, col.errResets)
 		return writeVendorError(w, from, cmp.Or(col.errStatus, streamStatus(said)), p.Name+": "+said, col.errSaid), said
 	}
 	if col.err == "" && !ended && saysItsEnd(p, actual, model) && r.Context().Err() == nil && endsAtProbeCap(actual, request.MaxTokens, spent) {
@@ -11007,7 +11069,8 @@ const SessionHeader = "X-Magpie-Session"
 // ("<provider>/<id>", pinTargets), percent-encoded
 // when it isn't ASCII (pinnedName): only it is tried, and when it can't take the request the caller is told why rather
 // than another account answering — a probe of one account needs that one.
-// It goes no further than magpie.
+// One the user turned off is reached too (pinOff), from this machine or
+// by a gateway key held to nothing. It goes no further than magpie.
 const AccountHeader = "X-Magpie-Account"
 
 // sessionOf is the session a request names, "" when it names none.
