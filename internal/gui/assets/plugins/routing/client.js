@@ -785,6 +785,8 @@ function routingPage(part) {
     "": ["Quota first", "Quota first: of the accounts with quota to spare, the one whose allowance renews soonest goes first — what it has left would be lost at the reset. The week decides; an account with five hours and no week goes by its five hours, and one whose month its weeks can no longer use up before it renews by its week. One at 90% or more waits until the others can't answer; one resting after a failure goes last."],
     order: ["In order", "In order: the first answers everything until it can't; then the next."],
     drain: ["Until used up", "Until used up: one answers everything until its quota is used up; then the next, which keeps them even after the one before renews."],
+    // guhailin3 on X (routes.PaceDrain)
+    "pace-drain": ["Before expiry, one by one", "Before expiry, one by one: the account with the most left per hour until it is lost is picked, as Use before expiry picks, and takes every request until it is used up or fails; then the next is picked the same way."],
     // the unit that goes round is the user's message (Wing8Aqua on X)
     rotate: ["In turn", "In turn: each message you send goes to the next account, round the list; the agent's tool calls for it stay on the same one. With Stays on Session, a whole conversation stays on one instead."],
     usage: ["Least used first", "Least used first: the account with the most of its allowance left goes first; a key by the tokens magpie sent it lately."],
@@ -1053,6 +1055,7 @@ function routingPage(part) {
         ? t("In order: with {rested} resting after a failure, {who} is the first that can answer.", { rested: rested.join(", "), who: w })
         : t("In order: {who} is first, and answers everything while it can.", { who: w });
       case "drain": return t("Until used up: {who} is the one in use, and answers everything until it is used up.", { who: w });
+      case "pace-drain": return t("Before expiry, one by one: {who} is the one in use, picked for the most left per hour until it is lost, and answers everything until it is used up.", { who: w });
       case "rotate": return t("In turn: it's {who}'s turn — each request starts one further along.", { who: w });
       case "weight": return t(f.kind === "account" ? "By weight: it's {who}'s share — each account takes requests as its weight says." : "By weight: it's {who}'s share — each key takes requests as its weight says.", { who: w });
       case "free":
@@ -6424,7 +6427,7 @@ function routingPage(part) {
   };
   window.routingGroupsHome();
   if (gHome()) byWidth(gHome(), { max520: (w) => w <= 520 });
-  const ROUTE_OPTS = [["", "Quota first"], ["order", "In order"], ["drain", "Until used up"], ["rotate", "In turn"], ["usage", "Least used first"], ["pace", "Use before expiry"], ["free", "Free first"], ["fast", "Speed first"]];
+  const ROUTE_OPTS = [["", "Quota first"], ["order", "In order"], ["drain", "Until used up"], ["pace-drain", "Before expiry, one by one"], ["rotate", "In turn"], ["usage", "Least used first"], ["pace", "Use before expiry"], ["free", "Free first"], ["fast", "Speed first"]];
   // a group may also be routed by hand: every request to the member the
   // user picks on its card (provider.Manual, #317) — a provider's keys can't
   // and by its members' weights, as a provider's keys are (#1910)
@@ -6485,6 +6488,7 @@ function routingPage(part) {
     "": "Quota first, over the members' accounts and keys together: of the subscriptions with quota to spare, the one whose allowance renews soonest goes first — the week decides, and an account with five hours and no week (Claude Enterprise) goes by its five hours, so ahead of every week renewing later, and one whose month its weeks can no longer use up before it renews by its week; one resting after a failure goes last.",
     order: "In order: the first model until it can't answer, then the next — each over its own accounts or keys as its provider routes them.",
     drain: "Until used up: one account or key, across the members, takes every request until it is used up; then the next in the list, which keeps them even after an earlier one renews. One rate limited or failing is passed over only while it rests.",
+    "pace-drain": MODES["pace-drain"][1],
     rotate: "In turn: each message you send goes to the next member's account or key, round the list; the agent's tool calls for it stay on the same one. A move costs some prompt cache; with Stays on Session, a whole conversation stays on one instead.",
     usage: "Least used first: the account or key with the most of its allowance left goes first.",
     pace: "Use before expiry: the account with the most left per hour until it is lost goes first — its week at its reset, or credits in it that expire sooner — so less of each member's allowance is lost; an account with five hours and no week (Claude Enterprise) by what its five hours have left per hour until they renew, so almost always first; a key by the tokens magpie sent it lately.",
@@ -6607,6 +6611,10 @@ function routingPage(part) {
   // here, and an entry that isn't a group at all is left out.
   function groupsFrom(x) {
     x = x && typeof x === "object" ? x : {};
+    // the routings JS gateway plugins serve now, read with the groups: one
+    // installed since the state was read is in the pickers at once (app.js
+    // jsRoutings)
+    if (Array.isArray(x.jsRoutings)) state.jsRoutings = x.jsRoutings;
     const objs = (v) => Array.isArray(v) ? v.filter((o) => o && typeof o === "object") : [];
     const ids = (v) => Array.isArray(v) ? v.filter((s) => typeof s === "string") : [];
     // the lists Go leaves out when empty stay out; null or a non-list is none
@@ -6788,7 +6796,7 @@ function routingPage(part) {
   // there, rather than leaving the slot empty.
   const openGroupEditor = async (g) => {
     if (groupDirty() && !(await confirmDiscard())) return false;
-    gEdit = { id: g.id, draft: { name: g.name, note: g.note || "", members: [...g.members], match: [...(g.match || [])], matched: [...(g.matched || [])], fast: [...(g.fast || [])], ultra: [...(g.ultra || [])], off: [...(g.off || [])], weights: { ...(g.weights || {}) }, effortMaps: Object.fromEntries(Object.entries(g.effortMaps || {}).map(([id, m]) => [id, { ...m }])), accounts: [...(g.accounts || [])], keys: [...(g.keys || [])], redact: g.redact || "", routing: g.routing || "", pick: g.pick || "", affinity: g.affinity || "", sink: sinkModeOf(g), unlists: !!g.unlists, firstToken: g.firstToken || 0, patience: g.patience || 0, context: g.context || 0, compact: g.compact || 0, classifier: g.classifier || "", classifierMore: [...(g.classifierMore || [])], intentSure: g.intentSure ?? null, effort: g.effort || "", levels: [...(g.levels || [])], rules: (g.rules || []).map((r) => ({ ...r, ...(r.more?.length ? { more: [...r.more] } : {}), intent: r.intent || "", agents: [...(r.agents || [])], folders: [...(r.folders || [])], exceptFolders: [...(r.exceptFolders || [])], where: (r.where || []).map((c) => ({ ...c })), time: r.time ? { ...r.time, days: [...(r.time.days || [])] } : null })) } };
+    gEdit = { id: g.id, draft: { name: g.name, note: g.note || "", members: [...g.members], match: [...(g.match || [])], matched: [...(g.matched || [])], fast: [...(g.fast || [])], ultra: [...(g.ultra || [])], off: [...(g.off || [])], weights: { ...(g.weights || {}) }, effortMaps: Object.fromEntries(Object.entries(g.effortMaps || {}).map(([id, m]) => [id, { ...m }])), accounts: [...(g.accounts || [])], keys: [...(g.keys || [])], redact: g.redact || "", routing: g.routing || "", pick: g.pick || "", affinity: g.affinity || "", sink: sinkModeOf(g), unlists: !!g.unlists, firstToken: g.firstToken || 0, patience: g.patience || 0, context: g.context || 0, compact: g.compact || 0, classifier: g.classifier || "", classifierMore: [...(g.classifierMore || [])], intentSure: g.intentSure ?? null, classifyPrompt: g.classifyPrompt || "", effort: g.effort || "", levels: [...(g.levels || [])], rules: (g.rules || []).map((r) => ({ ...r, ...(r.more?.length ? { more: [...r.more] } : {}), intent: r.intent || "", agents: [...(r.agents || [])], folders: [...(r.folders || [])], exceptFolders: [...(r.exceptFolders || [])], where: (r.where || []).map((c) => ({ ...c })), time: r.time ? { ...r.time, days: [...(r.time.days || [])] } : null })) } };
     renderGroups();
     return true;
   };
@@ -7701,7 +7709,7 @@ function routingPage(part) {
         closeProtoMenu();
         if (v === cur || (groupDirty() && !(await confirmDiscard()))) return b.focus({ preventScroll: true });
         const n = opts.find(([id]) => id === v)?.[1] || v;
-        await groupAction("save", { id: g.id, name: g.name, note: g.note || "", members: namedOf(g), match: g.match || [], routing: v, pick: g.pick || "", affinity: g.affinity || "", sink: !!g.sink && sinkable(v), noSink: !!g.noSink, firstToken: g.firstToken || 0, patience: g.patience || 0, rules: g.rules || [], effort: g.effort || "", classifier: g.classifier || "", classifierMore: g.classifierMore || [], intentSure: g.intentSure ?? null, context: g.context || 0, compact: g.compact || 0, levels: g.levels || [], family: g.family || "", fast: g.fast || [], ultra: g.ultra || [], off: g.off || [], weights: g.weights || {}, effortMaps: g.effortMaps || {}, accounts: g.accounts || [], unlists: !!g.unlists },
+        await groupAction("save", { id: g.id, name: g.name, note: g.note || "", members: namedOf(g), match: g.match || [], routing: v, pick: g.pick || "", affinity: g.affinity || "", sink: !!g.sink && sinkable(v), noSink: !!g.noSink, firstToken: g.firstToken || 0, patience: g.patience || 0, rules: g.rules || [], effort: g.effort || "", classifier: g.classifier || "", classifierMore: g.classifierMore || [], intentSure: g.intentSure ?? null, classifyPrompt: g.classifyPrompt || "", context: g.context || 0, compact: g.compact || 0, levels: g.levels || [], family: g.family || "", fast: g.fast || [], ultra: g.ultra || [], off: g.off || [], weights: g.weights || {}, effortMaps: g.effortMaps || {}, accounts: g.accounts || [], unlists: !!g.unlists },
           t("{name}: {routing}", { name: g.name, routing: t(n) }));
         // the rows were drawn anew: the keyboard stays on this one's routing
         gList.querySelector(`.rt-group[data-id="${CSS.escape(g.id)}"] .rt-groute`)?.focus({ preventScroll: true });
@@ -7837,7 +7845,7 @@ function routingPage(part) {
       b.onclick = (e) => {
         e.stopPropagation(); // the card opens the editor; this picks
         if (on) return;
-        groupAction("save", { id: g.id, name: g.name, note: g.note || "", members: namedOf(g), match: g.match || [], routing: "manual", pick: id, affinity: g.affinity || "", sink: !!g.sink, noSink: !!g.noSink, firstToken: g.firstToken || 0, patience: g.patience || 0, rules: g.rules || [], effort: g.effort || "", classifier: g.classifier || "", classifierMore: g.classifierMore || [], intentSure: g.intentSure ?? null, context: g.context || 0, compact: g.compact || 0, levels: g.levels || [], family: g.family || "", fast: g.fast || [], ultra: g.ultra || [], off: g.off || [], weights: g.weights || {}, effortMaps: g.effortMaps || {}, accounts: g.accounts || [], unlists: !!g.unlists },
+        groupAction("save", { id: g.id, name: g.name, note: g.note || "", members: namedOf(g), match: g.match || [], routing: "manual", pick: id, affinity: g.affinity || "", sink: !!g.sink, noSink: !!g.noSink, firstToken: g.firstToken || 0, patience: g.patience || 0, rules: g.rules || [], effort: g.effort || "", classifier: g.classifier || "", classifierMore: g.classifierMore || [], intentSure: g.intentSure ?? null, classifyPrompt: g.classifyPrompt || "", context: g.context || 0, compact: g.compact || 0, levels: g.levels || [], family: g.family || "", fast: g.fast || [], ultra: g.ultra || [], off: g.off || [], weights: g.weights || {}, effortMaps: g.effortMaps || {}, accounts: g.accounts || [], unlists: !!g.unlists },
           t("{name}: every request to {model}", { name: g.name, model: memberName(id) }));
       };
       box.append(b);
@@ -8477,7 +8485,7 @@ function routingPage(part) {
     // owner: the form was too much at once). Open when one of them is set,
     // or as it was left while this group is being edited
     const adv = edAligned(el("details", "more advanced rt-gadv"));
-    adv.open = gEdit.adv ?? !!(d.match.length || d.unlists || d.routing || d.sink === "sink" || d.sink === "" || d.firstToken || d.patience || d.context || d.compact || d.affinity || d.effort || d.levels?.length || d.keys.length || d.redact);
+    adv.open = gEdit.adv ?? !!(d.match.length || d.unlists || d.routing || d.sink === "sink" || d.sink === "" || d.firstToken || d.patience || d.context || d.compact || d.affinity || d.effort || d.classifyPrompt || d.levels?.length || d.keys.length || d.redact);
     const advOf = gEdit;
     adv.onfold = (open) => { advOf.adv = open; };
     adv.append(el("summary", "", t("Advanced")));
@@ -9340,6 +9348,20 @@ function routingPage(part) {
     // choices under the labels)
     const cw = el("div");
     cw.append(cls);
+    // the classifier's instructions, the user's in place of magpie's
+    // (sloceanxc on X: magpie's misled theirs): under Advanced, shown once
+    // a rule has an intent, as few change them
+    const cpLabel = el("label", "", t("Classifier prompt"));
+    const cpIn = el("textarea", "rt-cls-prompt");
+    cpIn.rows = 3;
+    cpIn.maxLength = 4000;
+    cpIn.spellcheck = false;
+    cpIn.value = d.classifyPrompt || "";
+    cpIn.placeholder = t("Empty: magpie's own. The message goes to the intent that fits it best.");
+    cpIn.oninput = () => { d.classifyPrompt = cpIn.value; };
+    cpIn.onkeydown = (e) => e.stopPropagation();
+    const cpW = el("div", "rt-pickrow rt-cls-promptrow");
+    cpW.append(cpIn, infoTip(t("Told to the classifier in place of magpie's instructions as each turn begins. The intents are still listed by number, and it still answers with the number alone.")));
     const deciders = groups.deciders || [];
     const isJev = (id) => deciders.some((x) => x.id === id);
     // the subscription a classifier asks as every turn begins, by its
@@ -9357,6 +9379,7 @@ function routingPage(part) {
       const intents = d.rules.some((r) => r.intent?.trim() || (!r.pause && opened.get(r)?.has("intent")));
       const on = auto || intents;
       cls.hidden = cw.hidden = clabel.hidden = !on;
+      cpLabel.hidden = cpW.hidden = !intents;
       if (!on) return;
       clabel.textContent = t(auto && !intents ? "Decided by" : "Intent told by");
       // a model, or another group: its models are asked in turn, failing
@@ -9481,7 +9504,7 @@ function routingPage(part) {
       drawEffort(); drawClassifier();
     }), eHint);
     drawEffort();
-    advIn.append(el("label", "", t("Effort")), ew);
+    advIn.append(el("label", "", t("Effort")), ew, cpLabel, cpW);
     ed.append(clabel, cw);
     drawRules();
     // the levels agents are offered: those every model has, or ones the
@@ -9575,7 +9598,7 @@ function routingPage(part) {
       if (own && !d.levels.length) return status(t("Pick a level to offer, or leave them to its models"), "warn");
       saveBtn.classList.add("busy");
       // refused, Add can be pressed again (busy, it takes no clicks)
-      groupAction("save", { id: idOf(), from: g?.id, name: d.name.trim() || idOf(), note: (d.note || "").trim(), members: namedOf(d), placed: d.members, match: d.match, routing: d.routing, pick: d.pick || "", affinity: d.affinity, sink: d.sink === "sink" && sinkable(d.routing), noSink: d.sink === "", firstToken: d.firstToken || 0, patience: d.patience || 0, rules: d.rules, effort: d.effort, classifier: d.rules.some((r) => r.intent) || d.effort === "auto" ? d.classifier : "", classifierMore: d.rules.some((r) => r.intent) || d.effort === "auto" ? d.classifierMore || [] : [], intentSure: d.intentSure ?? null, context: d.context || 0, compact: d.compact || 0, levels: own ? d.levels : [], family: g?.family || "", fast: d.fast.filter((x) => d.members.includes(x)), ultra: d.ultra.filter((x) => d.fast.includes(x) && d.members.includes(x)), off: d.off.filter((x) => d.members.includes(x)), weights: Object.fromEntries(Object.entries(d.weights).filter(([x, n]) => d.members.includes(x) && n > 1)), effortMaps: Object.fromEntries(Object.entries(d.effortMaps).filter(([x, m]) => d.members.includes(x) && Object.keys(m).length)), accounts: d.accounts.filter((a) => accountPids().includes(a.slice(0, a.indexOf("/")))), keys: d.keys, redact: d.redact || "follow", unlists: !!d.unlists, template: d.template || "" }, t(g ? "{name} saved" : "{name} added", { name: d.name.trim() || idOf() }))
+      groupAction("save", { id: idOf(), from: g?.id, name: d.name.trim() || idOf(), note: (d.note || "").trim(), members: namedOf(d), placed: d.members, match: d.match, routing: d.routing, pick: d.pick || "", affinity: d.affinity, sink: d.sink === "sink" && sinkable(d.routing), noSink: d.sink === "", firstToken: d.firstToken || 0, patience: d.patience || 0, rules: d.rules, effort: d.effort, classifier: d.rules.some((r) => r.intent) || d.effort === "auto" ? d.classifier : "", classifierMore: d.rules.some((r) => r.intent) || d.effort === "auto" ? d.classifierMore || [] : [], intentSure: d.intentSure ?? null, classifyPrompt: (d.classifyPrompt || "").trim(), context: d.context || 0, compact: d.compact || 0, levels: own ? d.levels : [], family: g?.family || "", fast: d.fast.filter((x) => d.members.includes(x)), ultra: d.ultra.filter((x) => d.fast.includes(x) && d.members.includes(x)), off: d.off.filter((x) => d.members.includes(x)), weights: Object.fromEntries(Object.entries(d.weights).filter(([x, n]) => d.members.includes(x) && n > 1)), effortMaps: Object.fromEntries(Object.entries(d.effortMaps).filter(([x, m]) => d.members.includes(x) && Object.keys(m).length)), accounts: d.accounts.filter((a) => accountPids().includes(a.slice(0, a.indexOf("/")))), keys: d.keys, redact: d.redact || "follow", unlists: !!d.unlists, template: d.template || "" }, t(g ? "{name} saved" : "{name} added", { name: d.name.trim() || idOf() }))
         .then(() => saveBtn.classList.remove("busy"));
     };
     // what goes wrong is said where it is seen, never a click that does nothing
