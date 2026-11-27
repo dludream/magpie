@@ -780,6 +780,29 @@ function routingPage(part) {
   // a try that answered: one whose reply broke off after it began (its 200
   // sent, then the vendor's error, #733) didn't, and has a fail
   const tryOk = (tr) => tr.status < 400 && !tr.fail;
+  // what the vendor said, word for word, without the hint magpie put after
+  // it (HINTS): the steps' "It said", and the row of a try gone on from
+  const saidOf = (tr) => {
+    const e = typeof tr.error === "string" ? tr.error : "", hint = e && HINTS.find((h) => e.endsWith(" — " + h));
+    return { said: hint ? e.slice(0, -(hint.length + 3)) : e, hint };
+  };
+  // a row the request went on from: its status, magpie's reading of the
+  // failure when it has a kind (a proxy down, a rate limit) and the vendor's
+  // own words (Dazzle_sys on X), cut short on the row and read whole over it
+  const wentSay = (tr) => {
+    const { said } = saidOf(tr), status = tr.status, fail = failWord(tr.fail, tr.rest);
+    if (!said) return t("{status} · {fail} · went on to the next", { status, fail });
+    const error = said.length > 600 ? said.slice(0, 600) + "…" : said;
+    return FAIL[tr.fail] && tr.fail !== "other" ? t("{status} · {fail} · went on to the next · {error}", { status, fail, error })
+      : t("{status} · went on to the next · {error}", { status, error });
+  };
+  // a row a new conversation passed over: a session kept whole went to the
+  // one fewer sessions are on (Affinity.Spread), and this one, ahead of it,
+  // holds more
+  const spreadPast = (r, w) => {
+    const a = r.affinity, i = a?.why === "first" && a.spread > 0 ? r.order.findIndex((y) => seat(y) === seat(w)) : -1;
+    return i >= 1 && i <= a.spread;
+  };
   const API = { anthropic: "Anthropic", chat: "OpenAI", responses: "OpenAI Responses", gemini: "Gemini" };
   const MODES = {
     "": ["Quota first", "Quota first: of the accounts with quota to spare, the one whose allowance renews soonest goes first — what it has left would be lost at the reset. The week decides; an account with five hours and no week goes by its five hours, and one whose month its weeks can no longer use up before it renews by its week. One at 90% or more waits until the others can't answer; one resting after a failure goes last."],
@@ -831,19 +854,28 @@ function routingPage(part) {
   // An agent magpie knows keeps its name beside the key's, as Usage's
   // rows read ("DimCode · Server"): DimCode calling a Docker magpie by a
   // key named "Magpie" read as that alone (Yayoi_no_yume on X).
-  function callerName(r) {
+  // A request from another computer names it after (r.client, its name
+  // when the gateway has learnt it, else its address): agents on two
+  // computers sharing this one's gateway both read "DeepSeek Harness",
+  // as one node, with nothing to say which asked (jzing.draw on Discord).
+  // The stage's nodes say the computer on their small line (whoName,
+  // computerOf), where a narrow node's cut name can't lose it.
+  function whoName(r) {
     const k = r.callerKey && (callerKeys.find((x) => x.id === r.callerKey)?.name || r.callerKeyName);
     if (!k) return agentName(r.agent);
     const ag = agentOf(r.agent);
     return ag?.name && ag.name !== k ? `${ag.name} · ${k}` : k;
   }
+  const computerOf = (r) => r.client ? r.clientName || r.client : "";
+  const callerName = (r) => [whoName(r), computerOf(r)].filter(Boolean).join(" · ");
   // callerLines head a caller's tooltip: its name, then its agent's when
-  // the name doesn't say it already
+  // the name doesn't say it already, then its computer's address when the
+  // name gives the computer's name
   const callerLines = (r) => {
     const c = callerName(r), a = agentName(r.agent);
-    return c === a || c.startsWith(a + " · ") ? [c] : [c, a];
+    return [...(c === a || c.startsWith(a + " · ") ? [c] : [c, a]), ...(r.client && r.clientName ? [r.client] : [])];
   };
-  const srcOf = (r) => r.callerKey ? r.agent + "\u0001" + r.callerKey : r.agent;
+  const srcOf = (r) => (r.callerKey ? r.agent + "\u0001" + r.callerKey : r.agent) + (r.client ? "\u0002" + r.client : "");
   // userShown is an account of provider as the user named it in magpie
   // (provider.AccountNames, #1515), else as its plugin's usage names it
   // (accountUsers, #4416), else as its vendor names it. The name
@@ -1177,7 +1209,9 @@ function routingPage(part) {
   // read as every conversation stuck to one account (YsiCing on X: three
   // Codex accounts, two at 0% "conversation kept on another").
   function behindWhy(r, w) {
-    const f = r.order[0], x = r.order.find((y) => y.id === w.id);
+    // the row's own seat: two members on one account (a model each) are
+    // two rows of one id
+    const f = r.order[0], x = r.order.find((y) => seat(y) === seat(w)) || r.order.find((y) => y.id === w.id);
     if (!f || !x || x === f || f.rest || f.fallback || x.fallback || x.routing || !x.known || group(x) !== "fine") return null;
     if (!weighedWith(r, x).includes(f) || memberSplit(r, f, x)) return null;
     const kept = ["session", "turn", "cache"].includes(r.affinity?.why) ? "kept" : null;
@@ -2975,14 +3009,14 @@ function routingPage(part) {
       const a = agents.get(id), r = rs.filter((x) => srcOf(x) === id).pop(), ag = agentOf(r.agent);
       for (const n of [a.node, a.wire]) n.style.setProperty("--agent", hueOf(id));
       if (a.icon !== (ag?.icon || "generic")) { a.icon = ag?.icon || "generic"; a.ic.replaceChildren(icon(a.icon)); }
-      setText(a.name, callerName(r));
+      setText(a.name, whoName(r));
       // one agent working in more than one folder at once: which, by
       // their last level (#1068). The stage holds an agent's latest
       // request alone, so its others still going, or just done, count too.
       const n = now(), going = pinned ? [] : [...src().values()].filter((x) => srcOf(x) === id && (!x.done || at(x.time) + (x.ms || 0) > n - LINGER));
       const fs = foldersOf([...new Set([...going, ...rs.filter((x) => srcOf(x) === id)])].sort((x, y) => x.id - y.id));
       // told again every second (countdown): only what changed is written
-      setText(a.sub, fs.length > 1 ? fs.map(lastLevel).join(", ") : r.model);
+      setText(a.sub, computerOf(r) || (fs.length > 1 ? fs.map(lastLevel).join(", ") : r.model));
       const tip = [...callerLines(r), r.model, ...fs.map((f) => t("Folder") + ": " + f)].join("\n");
       if (a.node.title !== tip) a.node.title = tip;
     }
@@ -3291,8 +3325,12 @@ function routingPage(part) {
         // done, not one the gateway went on from (#2281)
         else if (tr.done && !tr.rest && !tr.again && !tr.earlier && r.done && tr === r.tries[r.tries.length - 1]) gave.set(tryseat(r, tr), tr);
         // one the gateway went on from says what it answered, and that the
-        // request went on, not that the agent got it
-        else if (tr.done && !tr.rest && !tr.again && !tr.credits && tr !== r.tries[r.tries.length - 1]) went.set(tryseat(r, tr), tr);
+        // request went on, not that the agent got it: one that rested too,
+        // whose rest the next on its account lifted by answering (Dazzle_sys
+        // on X: GPT-6.2 Sol failed, GPT-6 Luna on the same Codex account
+        // answered, and Sol's row said nothing of why); while it still
+        // rests, the row says so instead
+        else if (tr.done && !tr.again && !tr.credits && tr !== r.tries[r.tries.length - 1]) went.set(tryseat(r, tr), tr);
         if (tr.rest) restAt(tr.id, modelOf(tr), tr.rest, at(tr.start) + (tr.ms || 0));
       }
       // it answered: whatever rest it began in is over
@@ -3330,7 +3368,8 @@ function routingPage(part) {
       }
       else if (answered.has(id)) { s = (agents.size > 1 ? t("answered {agent}", { agent: agentName(r.agent) }) : t("answered this request")) + (said && " · " + said); named = titleOf(r); }
       else if (gave.has(id)) s = t("{status} · {fail} · passed to {agent}", { status: gave.get(id).status, fail: failWord(gave.get(id).fail, gave.get(id).rest), agent: agentName(r.agent) });
-      else if (went.has(id)) s = t("{status} · {fail} · went on to the next", { status: went.get(id).status, fail: failWord(went.get(id).fail, went.get(id).rest) });
+      else if (went.has(id)) s = wentSay(went.get(id));
+      else if (spreadPast(r, w)) s = w.known ? quota(w, "{n} used · other sessions on it · a new one went to one with fewer", "{n} left · other sessions on it · a new one went to one with fewer") : t("other sessions on it · a new one went to one with fewer");
       else if (w.noURL) s = noURLWord(w);
       else if (w.reserve) s = t("in reserve · {n} at once", { n: w.reserve });
       else if (w.sunk && !lifted(sunkKey(w), at(w.sunk))) s = t("rate limited at {time} · at the back", { time: clock(w.sunk) });
@@ -3891,8 +3930,7 @@ function routingPage(part) {
       }
       // what the vendor said, word for word: the why above is magpie's reading of it
       if (tr.done && !tryOk(tr) && tr.error) {
-        const hint = HINTS.find((h) => tr.error.endsWith(" — " + h));
-        const said = hint ? tr.error.slice(0, -(hint.length + 3)) : tr.error;
+        const { said, hint } = saidOf(tr);
         items.push([t("It said: {error}", { error: said.length > 600 ? said.slice(0, 600) + "…" : said }), "aside said"]);
         if (hint) items.push([t(hint), "aside"]);
       }
@@ -4274,7 +4312,8 @@ function routingPage(part) {
     // the folder its agent works in, the last two levels of it (#1068),
     // and why it went on another model than it named
     const folder = (movedSays(r) ? "\n" + movedWhy(r) : "") + (r.folder ? "\n" + t("Folder") + ": " + r.folder : "")
-      + (r.callerKey ? "\n" + t("Gateway key") + ": " + keyName(r) : "");
+      + (r.callerKey ? "\n" + t("Gateway key") + ": " + keyName(r) : "")
+      + (r.client ? "\n" + t("Computer") + ": " + (r.clientName ? `${r.clientName} (${r.client})` : r.client) : "");
     const w = !noAnswer(how) && r.tries.length > 1 && tr && tried(r, tr);
     if (!w) return head + r.provider + folder;
     const first = r.tries[0], f = tried(r, first);
@@ -10307,7 +10346,9 @@ function routingPage(part) {
       n.node.className = "ps-node ps-ag";
       n.node.style.setProperty("--agent", hueOf(id));
       n.wire.style.setProperty("--agent", hueOf(id));
-      n.node.replaceChildren(icon(ag?.icon || "generic"), el("span", "ps-name", callerName(r)));
+      const nm = el("span", "ps-name", whoName(r));
+      if (computerOf(r)) nm.append(el("small", "", computerOf(r)));
+      n.node.replaceChildren(icon(ag?.icon || "generic"), nm);
       n.node.title = [...callerLines(r), ...foldersOf(recent.filter((x) => srcOf(x) === id).slice(0, 20).reverse()).map((f) => t("Folder") + ": " + f)].join("\n");
       return n.node;
     }));

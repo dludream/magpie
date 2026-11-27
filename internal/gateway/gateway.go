@@ -1312,10 +1312,18 @@ func (s *Server) routes() *routeMux {
 	mux.HandleFunc("GET "+ArtifactPagePath+"{ref}/{path...}", s.artifactPage)
 	mux.HandleFunc("POST "+ArtifactPagePath+"{ref}/"+artifactAPIDir+"db", s.artifactDB)
 	mux.HandleFunc("GET "+ArtifactPagePath+"{ref}/"+artifactAPIDir+"events", s.artifactEvents)
+	mux.HandleFunc("GET "+ArtifactPagePath+"{ref}/"+artifactAPIDir+"live", s.artifactLive)
 	mux.HandleFunc("POST "+ArtifactPagePath+"{ref}/"+artifactAPIDir+"publish", s.artifactPublish)
 	mux.HandleFunc("POST "+ArtifactPagePath+"{ref}/"+artifactAPIDir+"meta", s.artifactMeta)
 	mux.HandleFunc("POST "+ArtifactPagePath+"{ref}/"+artifactAPIDir+"upload", s.artifactUpload)
 	mux.HandleFunc("POST "+ArtifactPagePath+"{ref}/"+artifactAPIDir+"assets", s.artifactAssets)
+	mux.HandleFunc("POST "+ArtifactPagePath+"{ref}/"+artifactAPIDir+"sample", s.artifactSample)
+	mux.HandleFunc("POST "+ArtifactPagePath+"{ref}/"+artifactAPIDir+"comments", s.artifactComments)
+	mux.HandleFunc("POST "+ArtifactPagePath+"{ref}/"+artifactAPIDir+"tts", s.artifactTTS)
+	mux.HandleFunc("POST "+ArtifactPagePath+"{ref}/"+artifactAPIDir+"dictation", s.artifactDictation)
+	mux.HandleFunc("POST "+ArtifactPagePath+"{ref}/"+artifactAPIDir+"mcp", s.artifactMCP)
+	mux.HandleFunc("POST "+ArtifactPagePath+"{ref}/"+artifactAPIDir+"files", s.artifactFiles)
+	mux.HandleFunc("GET "+ArtifactPagePath+"{ref}/"+artifactAPIDir+"shell", s.artifactShellEvents)
 	mux.HandleFunc("GET "+artifactBlobPath+"{id}", s.artifactBlob)
 	mux.HandleFunc(ImageMCPPath, s.imageMCP)
 	mux.HandleFunc(BrowserMCPPath, s.browserMCP)
@@ -1683,6 +1691,14 @@ func modelObject(e provider.Entry) map[string]any {
 	// (magpie group set … context=) included
 	if e.Context > 0 {
 		m["context_window"], m["context_length"], m["max_input_tokens"] = e.Context, e.Context, e.Context
+		// the most it may be raised to, when its vendor takes more than
+		// that window at a higher price (Copilot's gpt-6.2-sol: 272K,
+		// 1.05M): another magpie that has this one as its provider keeps
+		// it as its own model's MaxContext, so its user can raise the
+		// window there too (#7296)
+		if e.MaxContext > e.Context {
+			m["max_context_window"] = e.MaxContext
+		}
 	}
 	// the reply limit, kept within that window as agents are told it
 	// (#1438)
@@ -2821,6 +2837,11 @@ func estimate(req *Request) int {
 // serve routes one parsed-enough request to its provider.
 func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Protocol, body []byte) {
 	start := time.Now()
+	// magpie's own ask made while serving an agent's request — a search,
+	// an image description, a classifier asked through chat — is held to
+	// the accounts magpie's own requests are set to, not the agent's
+	// (ownHeld)
+	r = ownHeld(r)
 	// a client's "off" is magpie's none, for every route and check below
 	// that reads the body's effort (plugins#334)
 	body = offAsNone(from, body)
@@ -4074,8 +4095,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 	// the plan as it stands for the tries: whether the one that answers
 	// stood in for a member listed ahead of its own (standsInFor)
 	plannedCs, plannedOrder := slices.Clone(cands), pl.order
-	// the row of the try before, when it failed, billed something and
-	// handed the request on, written once the next try begins
+	// the row of the try before, when it failed and handed the request
+	// on, written once the next try begins
 	var failedRow func()
 	walkBegan := time.Now() // the serial walk's start, for groupBudget (#5113)
 	// the turn near its cap the try before took, given back as the next
@@ -5055,15 +5076,18 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request, from provider.Pro
 		// written the whole conversation to that account's cache, and the
 		// next account wrote it again, while the Usage page counted the
 		// second alone, "2 tries" the only sign of the first (hhxk233 and
-		// Kayrainforest on X). A failure that billed nothing has no row.
+		// Kayrainforest on X). So is one that billed nothing, with its
+		// status and the vendor's words: a member's 429 or 529 the
+		// Routing page showed for a moment was nowhere on the Requests
+		// page, the answer's "2 tries" the only sign of it (Dazzle_sys on
+		// X), while Codex's own sign-in already kept a row for each try
+		// it handed on (codexUpstreamOn's handOn). A try that never went
+		// out (call.To empty) has none.
 		failedRow = func() {
 			if call.To == "" {
 				return
 			}
 			u := call.Usage.billed()
-			if u.Input+u.Output+u.CacheRead+u.CacheWrite == 0 {
-				return
-			}
 			rec := usage.Record{RouteID: tr.ID, Time: began, Agent: call.Agent, Via: call.Via, Provider: call.Provider, Host: where, Model: c.model,
 				ProviderKeyID: providerKeyID, ProviderKeyName: providerKeyName, ProviderAccount: providerAccount,
 				Requested: call.Model, Served: call.Usage.Served, Wire: wentAs, Upstream: call.Usage.Upstream,
@@ -7450,7 +7474,7 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 		// vendor's (Muse Spark's "rs_…:rs_…"), to an upstream that checks
 		// them (echo_ts)
 		if validatesItemIDs(p) || !s.fits(p.ID, itemIDsRefused(model), proto) {
-			body = plainItemIDs(body)
+			body = plainItemIDs(boundCallIDs(body))
 		}
 		// xAI's API turns away a tool_choice with no tools beside it ("A
 		// tool_choice was set on the request but no tools were specified"),
@@ -8003,7 +8027,7 @@ func (s *Server) passthrough(w http.ResponseWriter, r *http.Request, p provider.
 			// have, which a relay in front of OpenAI turns away as it
 			// does (echo_ts): asked once more with ids it takes, and so
 			// from then on
-			if nb := plainItemIDs(body); !bytes.Equal(nb, body) {
+			if nb := plainItemIDs(boundCallIDs(body)); !bytes.Equal(nb, body) {
 				refused = append(refused, itemIDsRefused(model))
 				body = nb
 				if res, err = s.forward(r.Context(), p, proto, path, p.Prepare(body), r.Header); err != nil {
@@ -9269,6 +9293,17 @@ func (s *Server) forwardTranslated(ctx context.Context, p provider.Provider, to 
 			// characters and more (#4525, #5812), which the build never
 			// bound. A request of no id to plain goes as it came.
 			body = plainItemIDs(body)
+		}
+		if to == provider.Responses {
+			// and a call's call_id longer than the 64 OpenAI's schema
+			// takes, which Copilot, OpenAI and the relays in front of
+			// them turn the whole request away over ("Invalid
+			// 'input[157].call_id': string too long", IotXws97689 on X):
+			// another provider's in the history (Cursor's are 87), or one
+			// a client was given salted (saltCallID). The body is
+			// magpie's own writing, so it goes bound to every upstream:
+			// a call and its output the same way, every turn
+			body = boundCallIDs(body)
 		}
 		if to == provider.Chat && req.WebSearch && p.IsRemoteMagpie() {
 			// the other magpie searches for it (search_remote.go)
